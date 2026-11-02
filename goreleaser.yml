@@ -26,6 +26,10 @@ builds:
         goarch: 386
       - goarch: arm64
         goos: windows
+      - goos: netbsd
+        goarch: 386
+      - goos: netbsd
+        goarch: arm
     ldflags: -s -w
 
 archives:

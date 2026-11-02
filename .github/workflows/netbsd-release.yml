@@ -1,0 +1,97 @@
+name: NetBSD-Release
+
+# Builds and publishes a GitHub release containing ONLY the NetBSD binaries
+# (amd64 and arm64) for the version currently in interfacer/src/browsh/version.go.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: "Release NetBSD binaries"
+    runs-on: ubuntu-latest
+    env:
+      GOOS: netbsd
+      CGO_ENABLED: 0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'interfacer/go.mod'
+
+      - name: Read version
+        id: version
+        run: |
+          version=$(grep -o 'browshVersion[[:space:]]*=[[:space:]]*"[^"]*"' interfacer/src/browsh/version.go | grep -o '"[^"]*"' | tr -d '"')
+          [ -z "$version" ] && { echo "Could not parse browshVersion"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "Browsh version: $version"
+
+      - name: Fetch signed webextension
+        # The real .xpi is signed at release time and needs MDN_KEY. Reuse the
+        # upstream signed bundle for this exact version instead.
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          url="https://github.com/browsh-org/browsh/releases/download/v$VERSION/browsh-$VERSION.xpi"
+          echo "Downloading $url"
+          curl -fL --retry 3 -o interfacer/src/browsh/browsh.xpi "$url"
+          ls -lh interfacer/src/browsh/browsh.xpi
+
+      - name: Cross-compile NetBSD binaries
+        working-directory: ./interfacer
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          for arch in amd64 arm64; do
+            out="browsh-netbsd-$arch"
+            GOARCH=$arch go build -v -ldflags "-s -w" -o "$GITHUB_WORKSPACE/$out" ./cmd/browsh/
+            file "$GITHUB_WORKSPACE/$out"
+            ls -lh "$GITHUB_WORKSPACE/$out"
+          done
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # Tag the current commit so the release has a stable, versioned ref.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f "$TAG" "$GITHUB_SHA"
+          git push origin "$TAG"
+
+          notes="NetBSD build of Browsh $VERSION. Binaries: netbsd/amd64 and netbsd/arm64."
+          if curl -sf -H "Authorization: token $GH_TOKEN" \
+            "https://api.github.com/repos/$GH_REPO/releases/tags/$TAG" > /dev/null; then
+            echo "Release $TAG already exists; uploading assets with --clobber"
+          else
+            # Create empty release first so assets can be uploaded individually.
+            curl -sf -X POST -H "Authorization: token $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -d "{\"tag_name\":\"$TAG\",\"name\":\"Browsh $VERSION (NetBSD)\",\"body\":\"$notes\"}" \
+              "https://api.github.com/repos/$GH_REPO/releases"
+          fi
+
+      - name: Upload assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          gh release upload "$TAG" "$GITHUB_WORKSPACE"/browsh-netbsd-* --clobber
+
+      - name: Check release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: gh release view "$TAG"
