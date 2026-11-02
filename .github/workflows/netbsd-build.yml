@@ -1,0 +1,52 @@
+name: NetBSD-Build
+
+# Temporary workflow to verify that the interfacer cross-compiles for NetBSD.
+# Only builds; does not test, tag, release or touch any other platform.
+on:
+  push:
+    branches:
+      - netbsd-build
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: "Cross-compile for NetBSD (${{ matrix.goarch }})"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        goarch: [amd64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'interfacer/go.mod'
+
+      - name: Stub webextension
+        # The real .xpi is signed at release time and needs the MDN_KEY secret.
+        # The embed directive only needs the file to exist to cross-compile.
+        run: touch interfacer/src/browsh/browsh.xpi
+
+      - name: Cross-compile
+        working-directory: ./interfacer
+        env:
+          GOOS: netbsd
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          go build -v -o "$GITHUB_WORKSPACE/browsh-netbsd-$GOARCH" ./cmd/browsh/
+          go version -m "$GITHUB_WORKSPACE/browsh-netbsd-$GOARCH"
+
+      - name: Show binary
+        run: |
+          file "$GITHUB_WORKSPACE/browsh-netbsd-${{ matrix.goarch }}"
+          ls -lh "$GITHUB_WORKSPACE"/browsh-netbsd-*
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: browsh-netbsd-${{ matrix.goarch }}
+          path: $GITHUB_WORKSPACE/browsh-netbsd-${{ matrix.goarch }}

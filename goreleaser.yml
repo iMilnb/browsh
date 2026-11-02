@@ -12,6 +12,7 @@ builds:
       - linux
       - freebsd
       - openbsd
+      - netbsd
     goarch:
       - 386
       - amd64
@@ -36,6 +37,8 @@ archives:
     - goos: freebsd
       format: binary
     - goos: openbsd
+      format: binary
+    - goos: netbsd
       format: binary
 
 nfpms:
